@@ -184,6 +184,23 @@ def api_backfill_stream():
     return Response(gen(), mimetype="text/event-stream", headers=headers)
 
 
+def _run_backfill(code, start, end):
+    """消费 _backfill_events，返回最终事件（done/error）的 dict。"""
+    final = {}
+    for ev in _backfill_events(code, start, end):
+        if ev.get("type") in ("done", "error"):
+            final = ev
+    return final
+
+
+def _recent_trading_day():
+    """最近一个非周末日期（今天若为工作日取今天，否则回退到上一个周五）。"""
+    d = datetime.now().date()
+    while d.weekday() >= 5:  # 5=周六, 6=周日
+        d -= timedelta(days=1)
+    return d.strftime("%Y-%m-%d")
+
+
 @app.route("/api/backfill", methods=["POST"])
 def api_backfill():
     """非流式回填（与流式同逻辑：跳过已有日期、切窗抓取），返回最终汇总。"""
@@ -197,10 +214,7 @@ def api_backfill():
         return jsonify({"ok": False, "msg": err}), 400
 
     try:
-        final = {}
-        for ev in _backfill_events(code, start, end):
-            if ev.get("type") in ("done", "error"):
-                final = ev
+        final = _run_backfill(code, start, end)
     except Exception as exc:  # noqa: BLE001
         return jsonify({"ok": False, "msg": "抓取失败：%s" % exc}), 502
 
@@ -214,6 +228,62 @@ def api_backfill():
             "文件总记录数": final.get("文件总记录数", 0),
         }
     )
+
+
+@app.route("/api/delete", methods=["POST"])
+def api_delete():
+    """删除选中 ETF 的全部数据（含 data/代码.xlsx 文件）。"""
+    body = request.get_json(silent=True) or {}
+    codes = body.get("codes") or []
+    if not codes:
+        return jsonify({"ok": False, "msg": "请先勾选要删除的 ETF"}), 400
+
+    deleted = []
+    for code in codes:
+        code = str(code).strip()
+        if not _CODE_RE.match(code):
+            continue
+        if storage.delete_code(code):
+            deleted.append(code)
+    return jsonify(
+        {"ok": True, "deleted": deleted, "msg": "已删除 %d 只 ETF 的数据" % len(deleted)}
+    )
+
+
+@app.route("/api/update", methods=["POST"])
+def api_update():
+    """将选中 ETF 的数据增量更新到最近一个交易日。"""
+    body = request.get_json(silent=True) or {}
+    codes = body.get("codes") or []
+    if not codes:
+        return jsonify({"ok": False, "msg": "请先勾选要更新的 ETF"}), 400
+
+    end = _recent_trading_day()
+    results = []
+    for code in codes:
+        code = str(code).strip()
+        if not _CODE_RE.match(code):
+            results.append({"代码": code, "ok": False, "msg": "代码无效"})
+            continue
+        existing = storage.existing_dates(code)
+        start = existing[0] if existing else end  # 从已有最早日期起，增量补到最近交易日
+        try:
+            final = _run_backfill(code, start, end)
+        except Exception as exc:  # noqa: BLE001
+            results.append({"代码": code, "ok": False, "msg": "抓取失败：%s" % exc})
+            continue
+        if final.get("type") == "error":
+            results.append({"代码": code, "ok": False, "msg": final.get("msg")})
+            continue
+        results.append(
+            {
+                "代码": code,
+                "ok": True,
+                "新增交易日数": final.get("新增交易日数", 0),
+                "文件总记录数": final.get("文件总记录数", 0),
+            }
+        )
+    return jsonify({"ok": True, "更新至": end, "data": results})
 
 
 @app.route("/api/history")

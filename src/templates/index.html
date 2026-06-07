@@ -34,6 +34,8 @@
     }
     button:hover { background: #163a5c; }
     button:disabled { background: #9bb3c9; cursor: not-allowed; }
+    button.btn-danger { background: #c0392b; }
+    button.btn-danger:hover { background: #a5281b; }
     .msg { margin-top: 12px; font-size: 14px; }
     .msg.error { color: #c0392b; }
     .msg.ok { color: #1e7e34; }
@@ -148,8 +150,10 @@
       <h2>ETF 数据汇总</h2>
       <div class="row">
         <button id="s-btn" onclick="loadSummary()">刷新汇总</button>
+        <button id="s-update-btn" onclick="updateSelected()">更新数据</button>
+        <button id="s-del-btn" class="btn-danger" onclick="deleteSelected()">删除</button>
       </div>
-      <div class="hint">列出本地已存储数据的所有 ETF（代码、中文名称）及各自数据覆盖的时间段（数据来自 data/代码.xlsx）。点击某行可在上方「历史份额分析」中查看该 ETF。</div>
+      <div class="hint">列出本地已存储数据的所有 ETF（代码、中文名称）及各自数据覆盖的时间段（数据来自 data/代码.xlsx）。勾选后可「更新数据」（增量补到最近交易日）或「删除」（连同 data 下文件一并删除）；点击「查看分析」可在上方查看该 ETF。</div>
       <div id="s-msg" class="msg"></div>
       <div id="s-table"></div>
     </div>
@@ -432,11 +436,14 @@
         }
         msg.className = "msg ok";
         msg.textContent = `本地已存储 ${j.data.length} 只 ETF 的数据。`;
-        let html = "<table><thead><tr><th>代码</th><th>名称</th><th>数据起始</th>" +
+        let html = "<table><thead><tr>" +
+          '<th><input type="checkbox" id="s-check-all" onclick="toggleAllChecks(this)"></th>' +
+          "<th>代码</th><th>名称</th><th>数据起始</th>" +
           "<th>数据结束</th><th>记录数</th><th>操作</th></tr></thead><tbody>";
         for (const r of j.data) {
           html +=
-            `<tr><td>${r.代码}</td><td>${r.名称 || "-"}</td><td>${r.开始日期}</td>` +
+            `<tr><td><input type="checkbox" class="s-check" value="${r.代码}"></td>` +
+            `<td>${r.代码}</td><td>${r.名称 || "-"}</td><td>${r.开始日期}</td>` +
             `<td>${r.结束日期}</td><td>${fmt(r.记录数)}</td>` +
             `<td><button class="page-btn" onclick="analyzeEtf('${r.代码}')">查看分析</button></td></tr>`;
         }
@@ -444,6 +451,73 @@
         tableDiv.innerHTML = html;
       } catch (e) {
         msg.className = "msg error"; msg.textContent = "请求出错：" + e;
+      }
+    }
+
+    // 全选/取消全选
+    function toggleAllChecks(box) {
+      document.querySelectorAll(".s-check").forEach((c) => { c.checked = box.checked; });
+    }
+
+    // 取得汇总表中勾选的 ETF 代码
+    function getCheckedCodes() {
+      return Array.from(document.querySelectorAll(".s-check:checked")).map((c) => c.value);
+    }
+
+    function setSummaryBtns(disabled) {
+      ["s-btn", "s-update-btn", "s-del-btn"].forEach((id) => {
+        document.getElementById(id).disabled = disabled;
+      });
+    }
+
+    // 删除选中 ETF 的全部数据（含 data 下文件）
+    async function deleteSelected() {
+      const codes = getCheckedCodes();
+      const msg = document.getElementById("s-msg");
+      if (!codes.length) { msg.className = "msg error"; msg.textContent = "请先勾选要删除的 ETF。"; return; }
+      if (!confirm(`确定删除选中的 ${codes.length} 只 ETF 的全部数据吗？此操作会删除 data 下对应文件，且不可恢复。`)) return;
+      msg.className = "msg"; msg.textContent = "删除中…"; setSummaryBtns(true);
+      try {
+        const resp = await fetch("/api/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ codes }),
+        });
+        const j = await resp.json();
+        msg.className = j.ok ? "msg ok" : "msg error";
+        msg.textContent = j.msg || (j.ok ? "删除完成" : "删除失败");
+        if (j.ok) loadSummary();
+      } catch (e) {
+        msg.className = "msg error"; msg.textContent = "请求出错：" + e;
+      } finally {
+        setSummaryBtns(false);
+      }
+    }
+
+    // 将选中 ETF 增量更新到最近一个交易日
+    async function updateSelected() {
+      const codes = getCheckedCodes();
+      const msg = document.getElementById("s-msg");
+      if (!codes.length) { msg.className = "msg error"; msg.textContent = "请先勾选要更新的 ETF。"; return; }
+      msg.className = "msg"; msg.textContent = `正在更新 ${codes.length} 只 ETF 到最近交易日，请稍候…`;
+      setSummaryBtns(true);
+      try {
+        const resp = await fetch("/api/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ codes }),
+        });
+        const j = await resp.json();
+        if (!j.ok) { msg.className = "msg error"; msg.textContent = j.msg || "更新失败"; return; }
+        const parts = j.data.map((r) =>
+          r.ok ? `${r.代码} +${r.新增交易日数}天` : `${r.代码} 失败(${r.msg})`);
+        msg.className = "msg ok";
+        msg.textContent = `已更新至 ${j.更新至}：` + parts.join("，");
+        loadSummary();
+      } catch (e) {
+        msg.className = "msg error"; msg.textContent = "请求出错：" + e;
+      } finally {
+        setSummaryBtns(false);
       }
     }
 

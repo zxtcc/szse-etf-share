@@ -188,6 +188,15 @@ def list_summary():
     return results
 
 
+def delete_code(code):
+    """删除某 ETF 的数据文件（data/代码.xlsx）。删除成功返回 True，文件不存在返回 False。"""
+    path = get_file_path(code)
+    if os.path.isfile(path):
+        os.remove(path)
+        return True
+    return False
+
+
 def load_history(code):
     """读取某 ETF 历史数据，返回按日期升序的 dict 列表，供前端图表/表格使用。"""
     df = load_df(code)
