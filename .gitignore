@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 抓取生成的数据（保留目录，不纳入版本管理）
+data/*.xlsx
+
+# 编辑器/系统
+.DS_Store
+.idea/
+.vscode/

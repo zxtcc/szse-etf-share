@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>深交所 ETF 份额查询与历史分析</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      margin: 0; background: #f4f6f9; color: #222;
+    }
+    header {
+      background: #1f4e79; color: #fff; padding: 18px 24px;
+    }
+    header h1 { margin: 0; font-size: 20px; }
+    header p { margin: 6px 0 0; font-size: 12px; opacity: .8; }
+    .container { max-width: 1000px; margin: 20px auto; padding: 0 16px; }
+    .card {
+      background: #fff; border-radius: 8px; padding: 18px 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 20px;
+    }
+    .card h2 { margin: 0 0 14px; font-size: 16px; color: #1f4e79; }
+    .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+    .field { display: flex; flex-direction: column; }
+    .field label { font-size: 12px; color: #666; margin-bottom: 4px; }
+    input {
+      padding: 7px 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 14px;
+    }
+    button {
+      padding: 8px 18px; border: none; border-radius: 5px; cursor: pointer;
+      background: #1f4e79; color: #fff; font-size: 14px;
+    }
+    button:hover { background: #163a5c; }
+    button:disabled { background: #9bb3c9; cursor: not-allowed; }
+    .msg { margin-top: 12px; font-size: 14px; }
+    .msg.error { color: #c0392b; }
+    .msg.ok { color: #1e7e34; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }
+    th, td { border: 1px solid #e3e3e3; padding: 7px 10px; text-align: right; }
+    th { background: #f0f3f7; }
+    td:first-child, th:first-child { text-align: center; }
+    .result-grid { display: flex; gap: 30px; flex-wrap: wrap; margin-top: 10px; }
+    .result-grid div b { display: block; font-size: 12px; color: #888; font-weight: normal; }
+    .result-grid div span { font-size: 20px; color: #1f4e79; }
+    .hint { font-size: 12px; color: #999; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>深交所 ETF 份额查询与历史分析</h1>
+    <p>数据来源：深圳证券交易所 ETF 份额页面（www.szse.cn）</p>
+  </header>
+
+  <div class="container">
+    <!-- 单日查询 -->
+    <div class="card">
+      <h2>单日份额查询</h2>
+      <div class="row">
+        <div class="field">
+          <label>ETF 代码（6 位）</label>
+          <input id="q-code" placeholder="如 159150" value="159150" />
+        </div>
+        <div class="field">
+          <label>日期</label>
+          <input id="q-date" type="date" value="2025-09-04" />
+        </div>
+        <button id="q-btn" onclick="doQuery()">查询</button>
+      </div>
+      <div id="q-msg" class="msg"></div>
+      <div id="q-result" class="result-grid"></div>
+    </div>
+
+    <!-- 历史分析 -->
+    <div class="card">
+      <h2>历史份额分析</h2>
+      <div class="row">
+        <div class="field">
+          <label>ETF 代码（6 位）</label>
+          <input id="h-code" placeholder="如 159150" value="159150" />
+        </div>
+        <div class="field">
+          <label>开始日期</label>
+          <input id="h-start" type="date" value="2025-09-01" />
+        </div>
+        <div class="field">
+          <label>结束日期</label>
+          <input id="h-end" type="date" value="2025-09-05" />
+        </div>
+        <button id="b-btn" onclick="doBackfill()">批量回填区间</button>
+        <button id="h-btn" onclick="loadHistory()">加载历史</button>
+      </div>
+      <div class="hint">批量回填会逐日抓取深交所数据并存入 data/代码.xlsx，非交易日自动跳过，耗时与天数相关。</div>
+      <div id="h-msg" class="msg"></div>
+      <canvas id="chart" height="110" style="margin-top:16px;"></canvas>
+      <div id="h-table"></div>
+    </div>
+  </div>
+
+  <script>
+    let chart = null;
+
+    function fmt(n) {
+      if (n === null || n === undefined) return "-";
+      return Number(n).toLocaleString();
+    }
+
+    async function doQuery() {
+      const code = document.getElementById("q-code").value.trim();
+      const date = document.getElementById("q-date").value.trim();
+      const btn = document.getElementById("q-btn");
+      const msg = document.getElementById("q-msg");
+      const result = document.getElementById("q-result");
+      msg.className = "msg"; msg.textContent = "查询中…";
+      result.innerHTML = "";
+      btn.disabled = true;
+      try {
+        const resp = await fetch("/api/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code, date }),
+        });
+        const j = await resp.json();
+        if (!j.ok) {
+          msg.className = "msg error"; msg.textContent = j.msg;
+        } else {
+          const d = j.data;
+          msg.className = "msg ok"; msg.textContent = "查询成功，数据已保存。";
+          result.innerHTML =
+            `<div><b>名称</b><span>${d.名称 || "-"}</span></div>` +
+            `<div><b>代码</b><span>${d.代码}</span></div>` +
+            `<div><b>日期</b><span>${d.日期}</span></div>` +
+            `<div><b>份额（份）</b><span>${fmt(d.份额)}</span></div>` +
+            `<div><b>单位净值</b><span>${d.净值 ?? "-"}</span></div>`;
+        }
+      } catch (e) {
+        msg.className = "msg error"; msg.textContent = "请求出错：" + e;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function doBackfill() {
+      const code = document.getElementById("h-code").value.trim();
+      const start = document.getElementById("h-start").value.trim();
+      const end = document.getElementById("h-end").value.trim();
+      const btn = document.getElementById("b-btn");
+      const msg = document.getElementById("h-msg");
+      msg.className = "msg"; msg.textContent = "回填中，请耐心等待…";
+      btn.disabled = true;
+      try {
+        const resp = await fetch("/api/backfill", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code, start, end }),
+        });
+        const j = await resp.json();
+        if (!j.ok) {
+          msg.className = "msg error"; msg.textContent = j.msg;
+        } else {
+          msg.className = "msg ok";
+          msg.textContent =
+            `回填完成：成功 ${j.成功天数} 天，跳过 ${j.跳过天数} 天，失败 ${j.失败天数} 天，文件共 ${j.文件总记录数} 条。`;
+          loadHistory();
+        }
+      } catch (e) {
+        msg.className = "msg error"; msg.textContent = "请求出错：" + e;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function loadHistory() {
+      const code = document.getElementById("h-code").value.trim();
+      const msg = document.getElementById("h-msg");
+      const tableDiv = document.getElementById("h-table");
+      try {
+        const resp = await fetch("/api/history?code=" + encodeURIComponent(code));
+        const j = await resp.json();
+        if (!j.ok) {
+          msg.className = "msg error"; msg.textContent = j.msg;
+          return;
+        }
+        if (j.count === 0) {
+          msg.className = "msg";
+          msg.textContent = "暂无历史数据，请先使用「批量回填区间」或「单日查询」采集数据。";
+          if (chart) { chart.destroy(); chart = null; }
+          tableDiv.innerHTML = "";
+          return;
+        }
+        msg.className = "msg ok";
+        msg.textContent = `已加载 ${j.name || code} 共 ${j.count} 条历史记录。`;
+        renderChart(j.data, j.name || code);
+        renderTable(j.data);
+      } catch (e) {
+        msg.className = "msg error"; msg.textContent = "请求出错：" + e;
+      }
+    }
+
+    function renderChart(data, name) {
+      const labels = data.map((r) => r.日期);
+      const shares = data.map((r) => r.份额);
+      if (chart) chart.destroy();
+      chart = new Chart(document.getElementById("chart"), {
+        type: "line",
+        data: {
+          labels,
+          datasets: [{
+            label: name + " 逐日份额（份）",
+            data: shares,
+            borderColor: "#1f4e79",
+            backgroundColor: "rgba(31,78,121,.1)",
+            fill: true,
+            tension: 0.2,
+            pointRadius: 3,
+          }],
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: true } },
+          scales: { y: { ticks: { callback: (v) => Number(v).toLocaleString() } } },
+        },
+      });
+    }
+
+    function renderTable(data) {
+      let html = "<table><thead><tr><th>日期</th><th>名称</th><th>份额（份）</th><th>单位净值</th></tr></thead><tbody>";
+      for (const r of data) {
+        html += `<tr><td>${r.日期}</td><td>${r.名称 || "-"}</td><td>${fmt(r.份额)}</td><td>${r.净值 ?? "-"}</td></tr>`;
+      }
+      html += "</tbody></table>";
+      document.getElementById("h-table").innerHTML = html;
+    }
+  </script>
+</body>
+</html>
