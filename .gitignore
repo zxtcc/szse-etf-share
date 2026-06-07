@@ -5,8 +5,7 @@ __pycache__/
 .venv/
 venv/
 
-# 抓取生成的数据（保留目录，不纳入版本管理）
-data/*.xlsx
+# 汇总表排序等运行时状态（不纳入版本管理）
 data/_order.json
 
 # 编辑器/系统
