@@ -63,13 +63,14 @@ python3 app.py
 
 ### 修改端口（可选）
 
-若 5000 端口被占用，编辑 `app.py` 末尾：
+默认端口为 5000。**macOS 上 5000 常被系统「AirPlay 接收器」占用**，可用环境变量
+`PORT` 指定其它端口启动，无需改代码：
 
-```python
-app.run(host="127.0.0.1", port=5000, debug=True)
+```bash
+PORT=8000 python3 app.py
 ```
 
-将 `port=5000` 改为其它端口（如 `port=8000`），重新启动即可。
+然后访问 http://127.0.0.1:8000 。
 
 ## 停止程序
 

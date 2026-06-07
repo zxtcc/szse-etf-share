@@ -147,4 +147,8 @@ def api_history():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    import os
+
+    # 端口默认 5000，可用环境变量 PORT 覆盖（macOS 上 5000 常被 AirPlay 占用）
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(host="127.0.0.1", port=port, debug=True)
