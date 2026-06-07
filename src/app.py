@@ -250,9 +250,81 @@ def api_delete():
     )
 
 
+def _update_events(codes):
+    """逐个更新选中 ETF 到最近交易日，产出带 ETF 维度的进度事件。"""
+    end = _recent_trading_day()
+    total = len(codes)
+    results = []
+    for idx, code in enumerate(codes, start=1):
+        code = str(code).strip()
+        yield {"type": "etf_start", "code": code, "etf_index": idx, "etf_total": total}
+        if not _CODE_RE.match(code):
+            results.append({"代码": code, "ok": False, "msg": "代码无效"})
+            yield {"type": "etf_error", "code": code, "msg": "代码无效"}
+            continue
+        existing = storage.existing_dates(code)
+        start = existing[0] if existing else end
+        added, filetotal, err = 0, 0, None
+        try:
+            for ev in _backfill_events(code, start, end):
+                t = ev.get("type")
+                if t == "start":
+                    yield {
+                        "type": "etf_meta", "code": code,
+                        "etf_index": idx, "etf_total": total,
+                        "total_windows": ev.get("待抓取窗口数", 0),
+                    }
+                elif t == "progress":
+                    yield {
+                        "type": "etf_progress", "code": code,
+                        "etf_index": idx, "etf_total": total,
+                        "win": ev.get("当前窗口"), "total_windows": ev.get("总窗口数"),
+                    }
+                elif t == "done":
+                    added = ev.get("新增交易日数", 0)
+                    filetotal = ev.get("文件总记录数", 0)
+                elif t == "error":
+                    err = ev.get("msg")
+        except Exception as exc:  # noqa: BLE001
+            err = "抓取失败：%s" % exc
+
+        if err:
+            results.append({"代码": code, "ok": False, "msg": err})
+            yield {"type": "etf_error", "code": code, "etf_index": idx,
+                   "etf_total": total, "msg": err}
+        else:
+            results.append({"代码": code, "ok": True, "新增交易日数": added,
+                            "文件总记录数": filetotal})
+            yield {"type": "etf_done", "code": code, "etf_index": idx,
+                   "etf_total": total, "新增交易日数": added, "文件总记录数": filetotal}
+    yield {"type": "all_done", "更新至": end, "data": results}
+
+
+@app.route("/api/update_stream")
+def api_update_stream():
+    """SSE 流式更新：实时推送总进度、当前 ETF 及其窗口进度。"""
+    codes_raw = str(request.args.get("codes", "")).strip()
+    codes = [c.strip() for c in codes_raw.split(",") if c.strip()]
+
+    def gen():
+        if not codes:
+            yield "data: %s\n\n" % json.dumps(
+                {"type": "error", "msg": "请先勾选要更新的 ETF"}, ensure_ascii=False)
+            return
+        try:
+            for ev in _update_events(codes):
+                yield "data: %s\n\n" % json.dumps(ev, ensure_ascii=False)
+        except Exception as exc:  # noqa: BLE001
+            yield "data: %s\n\n" % json.dumps(
+                {"type": "error", "msg": "更新失败：%s" % exc}, ensure_ascii=False)
+
+    headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    return Response(gen(), mimetype="text/event-stream", headers=headers)
+
+
 @app.route("/api/update", methods=["POST"])
 def api_update():
-    """将选中 ETF 的数据增量更新到最近一个交易日。"""
+    """将选中 ETF 的数据增量更新到最近一个交易日（非流式，保留备用）。"""
     body = request.get_json(silent=True) or {}
     codes = body.get("codes") or []
     if not codes:

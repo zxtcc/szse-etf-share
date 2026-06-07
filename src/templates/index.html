@@ -159,6 +159,10 @@
       </div>
       <div class="hint">列出本地已存储数据的所有 ETF（代码、中文名称）及各自数据覆盖的时间段（数据来自 data/代码.xlsx）。勾选后可「更新数据」（增量补到最近交易日）或「删除」（连同 data 下文件一并删除）；点击「查看分析」可在上方查看该 ETF。</div>
       <div id="s-msg" class="msg"></div>
+      <div id="s-progress" class="progress-wrap" style="display:none;">
+        <div class="progress-bar"><div id="s-progress-fill" class="progress-fill"></div></div>
+        <div id="s-progress-text" class="progress-text"></div>
+      </div>
       <div id="s-table"></div>
     </div>
   </div>
@@ -554,31 +558,71 @@
       }
     }
 
-    // 将选中 ETF 增量更新到最近一个交易日
-    async function updateSelected() {
+    // 将选中 ETF 增量更新到最近一个交易日（SSE 实时进度）
+    function updateSelected() {
       const codes = getCheckedCodes();
       const msg = document.getElementById("s-msg");
       if (!codes.length) { msg.className = "msg error"; msg.textContent = "请先勾选要更新的 ETF。"; return; }
-      msg.className = "msg"; msg.textContent = `正在更新 ${codes.length} 只 ETF 到最近交易日，请稍候…`;
       setSummaryBtns(true);
-      try {
-        const resp = await fetch("/api/update", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ codes }),
-        });
-        const j = await resp.json();
-        if (!j.ok) { msg.className = "msg error"; msg.textContent = j.msg || "更新失败"; return; }
-        const parts = j.data.map((r) =>
-          r.ok ? `${r.代码} +${r.新增交易日数}天` : `${r.代码} 失败(${r.msg})`);
-        msg.className = "msg ok";
-        msg.textContent = `已更新至 ${j.更新至}：` + parts.join("，");
-        loadSummary();
-      } catch (e) {
-        msg.className = "msg error"; msg.textContent = "请求出错：" + e;
-      } finally {
-        setSummaryBtns(false);
-      }
+
+      const total = codes.length;
+      let completed = 0;            // 已完成的 ETF 数
+      const results = [];           // 各 ETF 结果文字
+      const nameOf = {};
+      summaryData.forEach((r) => { nameOf[r.代码] = r.名称; });
+
+      const prog = document.getElementById("s-progress");
+      const fill = document.getElementById("s-progress-fill");
+      const text = document.getElementById("s-progress-text");
+      prog.style.display = "block"; fill.style.width = "0%";
+      msg.className = "msg"; msg.textContent = `开始更新 ${total} 只 ETF…`;
+
+      // 总进度 = (已完成 ETF 数 + 当前 ETF 内部窗口完成比例) / 总 ETF 数
+      const setOverall = (winFrac) => {
+        const pct = Math.round(((completed + winFrac) / total) * 100);
+        fill.style.width = Math.min(100, Math.max(0, pct)) + "%";
+      };
+      const label = (ev, tail) =>
+        `总进度 ${ev.etf_index}/${ev.etf_total}　当前：${ev.code} ${nameOf[ev.code] || ""}　${tail}`;
+
+      const es = new EventSource("/api/update_stream?codes=" + encodeURIComponent(codes.join(",")));
+      es.onmessage = (e) => {
+        const ev = JSON.parse(e.data);
+        if (ev.type === "error") {
+          msg.className = "msg error"; msg.textContent = ev.msg;
+          es.close(); setSummaryBtns(false); prog.style.display = "none";
+        } else if (ev.type === "etf_start") {
+          text.textContent = label(ev, "准备中…");
+          setOverall(0);
+        } else if (ev.type === "etf_meta") {
+          text.textContent = ev.total_windows === 0
+            ? label(ev, "已是最新")
+            : label(ev, `本 ETF 0/${ev.total_windows} 段`);
+        } else if (ev.type === "etf_progress") {
+          const frac = ev.total_windows ? ev.win / ev.total_windows : 0;
+          text.textContent = label(ev, `本 ETF ${ev.win}/${ev.total_windows} 段`);
+          setOverall(frac);
+        } else if (ev.type === "etf_done") {
+          completed++; setOverall(0);
+          results.push(`${ev.code} +${ev.新增交易日数}天`);
+        } else if (ev.type === "etf_error") {
+          completed++; setOverall(0);
+          results.push(`${ev.code} 失败(${ev.msg})`);
+        } else if (ev.type === "all_done") {
+          fill.style.width = "100%";
+          msg.className = "msg ok";
+          msg.textContent = `已更新至 ${ev.更新至}：` + results.join("，");
+          es.close(); setSummaryBtns(false);
+          loadSummary();
+          setTimeout(() => { prog.style.display = "none"; }, 2000);
+        }
+      };
+      es.onerror = () => {
+        if (document.getElementById("s-update-btn").disabled) {
+          msg.className = "msg error"; msg.textContent = "连接中断，请重试。";
+          es.close(); setSummaryBtns(false); prog.style.display = "none";
+        }
+      };
     }
 
     // 从汇总表跳转到「历史份额分析」并加载该 ETF
