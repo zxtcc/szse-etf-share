@@ -25,13 +25,14 @@
 
 ```
 .
-├── app.py                 # Flask 入口与 API 路由
-├── szse_client.py         # 深交所数据抓取（份额 + 中文简称）
-├── storage.py             # data/代码.xlsx 读写与按日期去重
-├── templates/index.html   # 前端页面（表单 + 折线图 + 明细表）
-├── data/                  # 抓取数据存放目录（代码.xlsx）
-├── requirements.txt       # 依赖清单
-└── docs/                  # 需求 / 技术设计 / 测试方案 / 测试结果 文档
+├── src/                       # 源代码目录
+│   ├── app.py                 # Flask 入口与 API 路由
+│   ├── szse_client.py         # 深交所数据抓取（份额 + 中文简称）
+│   ├── storage.py             # data/代码.xlsx 读写与按日期去重
+│   └── templates/index.html   # 前端页面（表单 + 折线图 + 明细表）
+├── data/                      # 抓取数据存放目录（代码.xlsx，项目根目录下）
+├── requirements.txt           # 依赖清单
+└── docs/                      # 需求 / 技术设计 / 测试方案 / 测试结果 文档
 ```
 
 ## 环境依赖
@@ -53,8 +54,10 @@ pip3 install -r requirements.txt
 
 ## 启动程序
 
+在**项目根目录**下运行（数据会存到根目录的 `data/`）：
+
 ```bash
-python3 app.py
+python3 src/app.py
 ```
 
 终端出现 `Running on http://127.0.0.1:5000` 即启动成功，浏览器打开：
@@ -67,19 +70,19 @@ python3 app.py
 `PORT` 指定其它端口启动，无需改代码：
 
 ```bash
-PORT=8000 python3 app.py
+PORT=8000 python3 src/app.py
 ```
 
 然后访问 http://127.0.0.1:8000 。
 
 ## 停止程序
 
-在运行 `python3 app.py` 的终端窗口按 **`Ctrl + C`** 即可停止。
+在运行 `python3 src/app.py` 的终端窗口按 **`Ctrl + C`** 即可停止。
 
 如果是后台运行，可用以下命令结束进程：
 
 ```bash
-pkill -f "python3 app.py"
+pkill -f "src/app.py"
 ```
 
 ## 使用说明

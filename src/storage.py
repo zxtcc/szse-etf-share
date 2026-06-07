@@ -16,8 +16,9 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-# 数据目录（与本文件同级的 data 文件夹）
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+# 数据目录：项目根目录下的 data 文件夹（本文件位于 src/，故取上一级）
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(_PROJECT_ROOT, "data")
 
 # 程序内部规范列名（份额单位：万份）
 COLUMNS = ["日期", "代码", "名称", "份额", "抓取时间"]
