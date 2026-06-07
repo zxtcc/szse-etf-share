@@ -302,27 +302,33 @@
 
     async function loadHistory() {
       const code = document.getElementById("h-code").value.trim();
+      const start = document.getElementById("h-start").value.trim();
+      const end = document.getElementById("h-end").value.trim();
       const msg = document.getElementById("h-msg");
       const tableDiv = document.getElementById("h-table");
       const bar = document.getElementById("h-table-bar");
       const pager = document.getElementById("h-pager");
       try {
-        const resp = await fetch("/api/history?code=" + encodeURIComponent(code));
+        const url = "/api/history?code=" + encodeURIComponent(code) +
+          (start ? "&start=" + encodeURIComponent(start) : "") +
+          (end ? "&end=" + encodeURIComponent(end) : "");
+        const resp = await fetch(url);
         const j = await resp.json();
         if (!j.ok) {
           msg.className = "msg error"; msg.textContent = j.msg;
           return;
         }
+        const rangeText = (start || end) ? `（${start || "最早"} ~ ${end || "最新"}）` : "";
         if (j.count === 0) {
           msg.className = "msg";
-          msg.textContent = "暂无历史数据，请先使用「批量回填区间」或「单日查询」采集数据。";
+          msg.textContent = `该区间${rangeText}暂无数据，请调整时间区间，或先用「批量回填区间」/「单日查询」采集数据。`;
           if (chart) { chart.destroy(); chart = null; }
           historyData = [];
           tableDiv.innerHTML = ""; pager.innerHTML = ""; bar.style.display = "none";
           return;
         }
         msg.className = "msg ok";
-        msg.textContent = `已加载 ${j.name || code} 共 ${j.count} 条历史记录。`;
+        msg.textContent = `已加载 ${j.name || code}${rangeText} 共 ${j.count} 条记录。`;
         renderChart(j.data, j.name || code);
         // 进入分页展示
         historyData = j.data;

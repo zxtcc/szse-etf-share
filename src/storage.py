@@ -226,23 +226,34 @@ def delete_code(code):
     return False
 
 
-def load_history(code):
-    """读取某 ETF 历史数据，返回按日期升序的 dict 列表，供前端图表/表格使用。"""
+def load_history(code, start=None, end=None):
+    """读取某 ETF 历史数据，返回按日期升序的 dict 列表，供前端图表/表格使用。
+
+    可选 start/end（YYYY-MM-DD）按日期区间过滤。当日变动基于**完整序列**计算后再裁剪，
+    使区间首行的当日变动仍是相对前一交易日的真实变化。
+    """
     df = load_df(code)
     if df.empty:
         return []
     df = df.sort_values("日期").reset_index(drop=True)
-    # 始终基于份额重算当日变动，保证旧文件也能正确返回
-    change = _compute_change(df)
+    # 始终基于完整序列重算当日变动（保证旧文件与区间首行的变动都正确）
+    df = df.copy()
+    df["当日变动"] = _compute_change(df)
+    # 按区间裁剪（日期为 YYYY-MM-DD 字符串，可直接字典序比较）
+    days = df["日期"].astype(str)
+    if start:
+        df = df[days >= start]
+    if end:
+        df = df[df["日期"].astype(str) <= end]
     records = []
-    for i, (_, r) in enumerate(df.iterrows()):
+    for _, r in df.iterrows():
         records.append(
             {
                 "日期": None if pd.isna(r["日期"]) else str(r["日期"]),
                 "代码": None if pd.isna(r["代码"]) else str(r["代码"]),
                 "名称": None if pd.isna(r["名称"]) else str(r["名称"]),
                 "份额": None if pd.isna(r["份额"]) else float(r["份额"]),
-                "当日变动": float(change.iloc[i]),
+                "当日变动": float(r["当日变动"]),
             }
         )
     return records

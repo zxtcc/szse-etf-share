@@ -361,12 +361,21 @@ def api_update():
 
 @app.route("/api/history")
 def api_history():
-    """返回某 ETF 的历史逐日份额序列。"""
+    """返回某 ETF 的历史逐日份额序列，可选 start/end 按区间过滤。"""
     code = str(request.args.get("code", "")).strip()
     if not _CODE_RE.match(code):
         return jsonify({"ok": False, "msg": "请输入正确的 6 位 ETF 代码"}), 400
 
-    records = storage.load_history(code)
+    start = str(request.args.get("start", "")).strip()
+    end = str(request.args.get("end", "")).strip()
+    if start and not _valid_date(start):
+        return jsonify({"ok": False, "msg": "开始日期格式不正确（YYYY-MM-DD）"}), 400
+    if end and not _valid_date(end):
+        return jsonify({"ok": False, "msg": "结束日期格式不正确（YYYY-MM-DD）"}), 400
+    if start and end and start > end:
+        return jsonify({"ok": False, "msg": "开始日期不能晚于结束日期"}), 400
+
+    records = storage.load_history(code, start or None, end or None)
     name = ""
     for r in records:
         if r.get("名称"):
@@ -376,6 +385,8 @@ def api_history():
             "ok": True,
             "code": code,
             "name": name,
+            "start": start,
+            "end": end,
             "count": len(records),
             "data": records,
         }
