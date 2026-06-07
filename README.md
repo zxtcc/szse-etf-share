@@ -92,8 +92,8 @@ pkill -f "python3 app.py"
 
 ## 数据文件
 
-- 路径：`data/代码.xlsx`（如 `data/159150.xlsx`）
-- 列：`日期, 代码, 名称, 份额, 净值, 抓取时间`
+- 路径：`data/代码.xlsx`（如 `data/159919.xlsx`）
+- 列：`日期, 代码, 名称, 份额, 抓取时间`（**份额单位：万份**，与深交所基金规模口径一致）
 - 同一日期自动去重（重复抓取以最新结果覆盖）。
 
 ## 相关文档
@@ -105,8 +105,18 @@ pkill -f "python3 app.py"
 | `docs/03-测试方案与测试用例.md` | 测试范围与用例 |
 | `docs/04-测试结果说明.md` | 实际测试结果 |
 
+## 数据来源接口
+
+- 接口：深交所「基金规模查询」`api/report/ShowReport/data`，`CATALOGID=scsj_fund_jjgm`，
+  必带 `jjlb=ETF`，参数 `txtDm`（代码）、`txtStart`/`txtEnd`（起止日期）。
+- 该接口原生支持日期区间查询，单次最大跨度约 180 天、每页 20 条，
+  程序自动按窗口切分并翻页（见 `szse_client.fetch_range`）。
+- 返回字段：`size_date`（日期）、`fund_code`（代码）、`security_short_name`（中文简称）、
+  `current_size`（基金规模，单位**万份**）。
+
 ## 说明与限制
 
 - 数据依赖深交所公开接口，接口结构调整时需同步修改 `szse_client.py`。
 - 因深交所证书链不在 Python 默认 CA bundle，请求使用 `verify=False`（已抑制告警）。
-- 批量回填逐日请求并限速（每次约 0.3s），大区间耗时较长。
+- 该接口仅提供份额/规模（万份），不含单位净值。
+- 批量回填会按 180 天窗口逐段抓取并翻页，区间很大时耗时较长。

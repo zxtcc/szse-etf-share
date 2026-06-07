@@ -2,7 +2,8 @@
 """ETF 份额历史数据的本地存储模块。
 
 每个 ETF 的数据保存在 data/代码.xlsx，列结构：
-    日期, 代码, 名称, 份额, 净值, 抓取时间
+    日期, 代码, 名称, 份额, 抓取时间
+其中「份额」单位为万份（与深交所基金规模口径一致）。
 按「日期」去重（新数据覆盖旧数据），按日期升序保存。
 """
 
@@ -14,8 +15,8 @@ import pandas as pd
 # 数据目录（与本文件同级的 data 文件夹）
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
-# Excel 列顺序
-COLUMNS = ["日期", "代码", "名称", "份额", "净值", "抓取时间"]
+# Excel 列顺序（份额单位：万份）
+COLUMNS = ["日期", "代码", "名称", "份额", "抓取时间"]
 
 
 def _ensure_data_dir():
@@ -89,8 +90,7 @@ def load_history(code):
                 "日期": None if pd.isna(r["日期"]) else str(r["日期"]),
                 "代码": None if pd.isna(r["代码"]) else str(r["代码"]),
                 "名称": None if pd.isna(r["名称"]) else str(r["名称"]),
-                "份额": None if pd.isna(r["份额"]) else int(r["份额"]),
-                "净值": None if pd.isna(r["净值"]) else float(r["净值"]),
+                "份额": None if pd.isna(r["份额"]) else float(r["份额"]),
             }
         )
     return records

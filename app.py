@@ -8,8 +8,7 @@
 """
 
 import re
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from flask import Flask, jsonify, render_template, request
 
@@ -32,16 +31,6 @@ def _valid_date(s):
         return True
     except ValueError:
         return False
-
-
-def _daterange(start, end):
-    """生成 start~end（含端点）的逐日日期字符串。"""
-    d0 = datetime.strptime(start, "%Y-%m-%d").date()
-    d1 = datetime.strptime(end, "%Y-%m-%d").date()
-    cur = d0
-    while cur <= d1:
-        yield cur.strftime("%Y-%m-%d")
-        cur += timedelta(days=1)
 
 
 @app.route("/")
@@ -78,7 +67,7 @@ def api_query():
 
 @app.route("/api/backfill", methods=["POST"])
 def api_backfill():
-    """批量回填：抓取日期区间逐日份额，跳过非交易日。"""
+    """批量回填：一次性抓取日期区间内的逐日份额（接口原生支持区间，自动跳过非交易日）。"""
     body = request.get_json(silent=True) or {}
     code = str(body.get("code", "")).strip()
     start = str(body.get("start", "")).strip()
@@ -91,33 +80,24 @@ def api_backfill():
     if start > end:
         return jsonify({"ok": False, "msg": "开始日期不能晚于结束日期"}), 400
 
-    dates = list(_daterange(start, end))
-    if len(dates) > 400:
-        return jsonify({"ok": False, "msg": "区间过大，请控制在 400 天以内"}), 400
+    # 跨度上限保护（约 6 年），避免误填超长区间
+    span_days = (
+        datetime.strptime(end, "%Y-%m-%d") - datetime.strptime(start, "%Y-%m-%d")
+    ).days
+    if span_days > 2200:
+        return jsonify({"ok": False, "msg": "区间过大，请控制在约 6 年以内"}), 400
 
-    records = []
-    skipped = 0
-    failed = 0
-    for d in dates:
-        try:
-            rec = szse_client.fetch_share(code, d)
-        except Exception:
-            failed += 1
-            continue
-        if rec is None:
-            skipped += 1
-        else:
-            records.append(rec)
-        time.sleep(0.3)  # 轻微限速，避免请求过快
+    try:
+        records = szse_client.fetch_range(code, start, end)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "msg": "抓取失败：%s" % exc}), 502
 
     total = storage.save_records(code, records)
     return jsonify(
         {
             "ok": True,
             "msg": "回填完成",
-            "成功天数": len(records),
-            "跳过天数": skipped,
-            "失败天数": failed,
+            "抓取交易日数": len(records),
             "文件总记录数": total,
         }
     )

@@ -152,8 +152,7 @@
             `<div><b>名称</b><span>${d.名称 || "-"}</span></div>` +
             `<div><b>代码</b><span>${d.代码}</span></div>` +
             `<div><b>日期</b><span>${d.日期}</span></div>` +
-            `<div><b>份额（份）</b><span>${fmt(d.份额)}</span></div>` +
-            `<div><b>单位净值</b><span>${d.净值 ?? "-"}</span></div>`;
+            `<div><b>份额（万份）</b><span>${fmt(d.份额)}</span></div>`;
         }
       } catch (e) {
         msg.className = "msg error"; msg.textContent = "请求出错：" + e;
@@ -182,7 +181,7 @@
         } else {
           msg.className = "msg ok";
           msg.textContent =
-            `回填完成：成功 ${j.成功天数} 天，跳过 ${j.跳过天数} 天，失败 ${j.失败天数} 天，文件共 ${j.文件总记录数} 条。`;
+            `回填完成：抓取到 ${j.抓取交易日数} 个交易日，文件共 ${j.文件总记录数} 条。`;
           loadHistory();
         }
       } catch (e) {
@@ -228,7 +227,7 @@
         data: {
           labels,
           datasets: [{
-            label: name + " 逐日份额（份）",
+            label: name + " 逐日份额（万份）",
             data: shares,
             borderColor: "#1f4e79",
             backgroundColor: "rgba(31,78,121,.1)",
@@ -246,9 +245,9 @@
     }
 
     function renderTable(data) {
-      let html = "<table><thead><tr><th>日期</th><th>名称</th><th>份额（份）</th><th>单位净值</th></tr></thead><tbody>";
+      let html = "<table><thead><tr><th>日期</th><th>名称</th><th>份额（万份）</th></tr></thead><tbody>";
       for (const r of data) {
-        html += `<tr><td>${r.日期}</td><td>${r.名称 || "-"}</td><td>${fmt(r.份额)}</td><td>${r.净值 ?? "-"}</td></tr>`;
+        html += `<tr><td>${r.日期}</td><td>${r.名称 || "-"}</td><td>${fmt(r.份额)}</td></tr>`;
       }
       html += "</tbody></table>";
       document.getElementById("h-table").innerHTML = html;
