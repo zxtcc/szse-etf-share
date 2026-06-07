@@ -54,6 +54,26 @@
       transition: width .25s ease;
     }
     .progress-text { font-size: 12px; color: #555; margin-top: 6px; }
+    .table-bar {
+      display: flex; align-items: center; gap: 16px;
+      margin: 16px 0 8px; font-size: 13px; color: #555;
+    }
+    .table-bar select {
+      padding: 4px 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px;
+    }
+    .table-info { color: #888; }
+    .pager {
+      display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+      margin-top: 12px;
+    }
+    .page-btn {
+      min-width: 34px; padding: 5px 10px; font-size: 13px;
+      background: #fff; color: #1f4e79; border: 1px solid #cdd7e2; border-radius: 5px;
+    }
+    .page-btn:hover:not(:disabled):not(.active) { background: #eef2f7; }
+    .page-btn.active { background: #1f4e79; color: #fff; border-color: #1f4e79; cursor: default; }
+    .page-btn:disabled { color: #bbb; cursor: not-allowed; }
+    .page-ellipsis { color: #aaa; padding: 0 2px; }
   </style>
 </head>
 <body>
@@ -107,12 +127,28 @@
         <div id="h-progress-text" class="progress-text"></div>
       </div>
       <canvas id="chart" height="110" style="margin-top:16px;"></canvas>
+      <div id="h-table-bar" class="table-bar" style="display:none;">
+        <label>每页
+          <select id="h-pagesize">
+            <option value="20">20</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="0">全部</option>
+          </select>
+          条
+        </label>
+        <span id="h-table-info" class="table-info"></span>
+      </div>
       <div id="h-table"></div>
+      <div id="h-pager" class="pager"></div>
     </div>
   </div>
 
   <script>
     let chart = null;
+    // 历史数据分页状态
+    let historyData = [];   // 当前加载的全部历史记录
+    let curPage = 1;        // 当前页码（从 1 开始）
 
     // 返回最近一个非周末日期（今天若为工作日则取今天，否则回退到上一个周五），格式 YYYY-MM-DD
     function lastWeekday() {
@@ -241,6 +277,8 @@
       const code = document.getElementById("h-code").value.trim();
       const msg = document.getElementById("h-msg");
       const tableDiv = document.getElementById("h-table");
+      const bar = document.getElementById("h-table-bar");
+      const pager = document.getElementById("h-pager");
       try {
         const resp = await fetch("/api/history?code=" + encodeURIComponent(code));
         const j = await resp.json();
@@ -252,16 +290,66 @@
           msg.className = "msg";
           msg.textContent = "暂无历史数据，请先使用「批量回填区间」或「单日查询」采集数据。";
           if (chart) { chart.destroy(); chart = null; }
-          tableDiv.innerHTML = "";
+          historyData = [];
+          tableDiv.innerHTML = ""; pager.innerHTML = ""; bar.style.display = "none";
           return;
         }
         msg.className = "msg ok";
         msg.textContent = `已加载 ${j.name || code} 共 ${j.count} 条历史记录。`;
         renderChart(j.data, j.name || code);
-        renderTable(j.data);
+        // 进入分页展示
+        historyData = j.data;
+        curPage = 1;
+        bar.style.display = "flex";
+        document.getElementById("h-pagesize").onchange = () => { curPage = 1; renderTablePage(); };
+        renderTablePage();
       } catch (e) {
         msg.className = "msg error"; msg.textContent = "请求出错：" + e;
       }
+    }
+
+    // 跳转到指定页（供页码按钮调用）
+    function gotoPage(p) { curPage = p; renderTablePage(); }
+
+    // 按当前页码与每页条数渲染表格 + 分页控件
+    function renderTablePage() {
+      const total = historyData.length;
+      const size = parseInt(document.getElementById("h-pagesize").value, 10); // 0 表示全部
+      const pageCount = size === 0 ? 1 : Math.max(1, Math.ceil(total / size));
+      if (curPage > pageCount) curPage = pageCount;
+      if (curPage < 1) curPage = 1;
+
+      const start = size === 0 ? 0 : (curPage - 1) * size;
+      const end = size === 0 ? total : Math.min(start + size, total);
+      renderTable(historyData.slice(start, end));
+
+      document.getElementById("h-table-info").textContent =
+        `共 ${total} 条　第 ${curPage}/${pageCount} 页　显示第 ${total ? start + 1 : 0}-${end} 条`;
+      renderPager(pageCount);
+    }
+
+    // 渲染分页按钮（带首末页与省略号）
+    function renderPager(pageCount) {
+      const pager = document.getElementById("h-pager");
+      if (pageCount <= 1) { pager.innerHTML = ""; return; }
+      const btn = (label, page, disabled, active) =>
+        `<button class="page-btn${active ? " active" : ""}" ${disabled ? "disabled" : ""} ` +
+        `onclick="gotoPage(${page})">${label}</button>`;
+      let html = btn("上一页", curPage - 1, curPage <= 1, false);
+      const win = 2;
+      let from = Math.max(1, curPage - win);
+      let to = Math.min(pageCount, curPage + win);
+      if (from > 1) {
+        html += btn("1", 1, false, curPage === 1);
+        if (from > 2) html += '<span class="page-ellipsis">…</span>';
+      }
+      for (let p = from; p <= to; p++) html += btn(String(p), p, false, p === curPage);
+      if (to < pageCount) {
+        if (to < pageCount - 1) html += '<span class="page-ellipsis">…</span>';
+        html += btn(String(pageCount), pageCount, false, curPage === pageCount);
+      }
+      html += btn("下一页", curPage + 1, curPage >= pageCount, false);
+      pager.innerHTML = html;
     }
 
     function renderChart(data, name) {
