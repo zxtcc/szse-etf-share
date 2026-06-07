@@ -315,6 +315,15 @@ def api_summary():
     return jsonify({"ok": True, "data": storage.list_summary()})
 
 
+@app.route("/api/order", methods=["POST"])
+def api_order():
+    """保存汇总表的自定义排列顺序（ETF 代码列表）。"""
+    body = request.get_json(silent=True) or {}
+    codes = body.get("codes") or []
+    storage.save_order(codes)
+    return jsonify({"ok": True})
+
+
 if __name__ == "__main__":
     import os
 

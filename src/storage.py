@@ -10,6 +10,7 @@
 
 import os
 import glob
+import json
 from datetime import datetime
 
 import pandas as pd
@@ -43,9 +44,32 @@ def _compute_change(df_sorted):
     return vals.diff().fillna(0).round(2)
 
 
+# 汇总表的自定义排列顺序持久化文件
+ORDER_FILE = os.path.join(DATA_DIR, "_order.json")
+
+
 def _ensure_data_dir():
     if not os.path.isdir(DATA_DIR):
         os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def load_order():
+    """读取汇总表自定义顺序（ETF 代码列表），文件不存在返回空列表。"""
+    if os.path.isfile(ORDER_FILE):
+        try:
+            with open(ORDER_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+            return [str(c) for c in data]
+        except Exception:
+            return []
+    return []
+
+
+def save_order(codes):
+    """保存汇总表自定义顺序（ETF 代码列表）。"""
+    _ensure_data_dir()
+    with open(ORDER_FILE, "w", encoding="utf-8") as f:
+        json.dump([str(c).strip() for c in codes], f, ensure_ascii=False)
 
 
 def get_file_path(code):
@@ -161,8 +185,8 @@ def existing_dates(code):
 def list_summary():
     """汇总本地已存储数据的所有 ETF。
 
-    返回 dict 列表（按代码升序），每项含：
-        代码, 名称, 开始日期, 结束日期, 记录数
+    返回 dict 列表，每项含：代码, 名称, 开始日期, 结束日期, 记录数。
+    排列顺序优先使用用户自定义顺序（load_order），未列入的按代码升序排在其后。
     """
     if not os.path.isdir(DATA_DIR):
         return []
@@ -185,6 +209,11 @@ def list_summary():
                 "记录数": len(dates),
             }
         )
+
+    # 按用户自定义顺序排序；未列入顺序的（如新增 ETF）排在末尾并按代码升序
+    order = load_order()
+    pos = {c: i for i, c in enumerate(order)}
+    results.sort(key=lambda r: (pos.get(r["代码"], len(order)), r["代码"]))
     return results
 
 

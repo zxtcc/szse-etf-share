@@ -76,6 +76,10 @@
     .page-btn.active { background: #1f4e79; color: #fff; border-color: #1f4e79; cursor: default; }
     .page-btn:disabled { color: #bbb; cursor: not-allowed; }
     .page-ellipsis { color: #aaa; padding: 0 2px; }
+    .drag-handle { cursor: grab; color: #b0b0b0; text-align: center; user-select: none; }
+    .drag-handle:active { cursor: grabbing; }
+    tr.dragging { opacity: .4; }
+    tr.drag-over td { border-top: 2px solid #1f4e79; }
   </style>
 </head>
 <body>
@@ -164,6 +168,7 @@
     // 历史数据分页状态
     let historyData = [];   // 当前加载的全部历史记录
     let curPage = 1;        // 当前页码（从 1 开始）
+    let summaryData = [];   // ETF 数据汇总当前顺序
 
     // 返回最近一个非周末日期（今天若为工作日则取今天，否则回退到上一个周五），格式 YYYY-MM-DD
     function lastWeekday() {
@@ -435,22 +440,77 @@
           return;
         }
         msg.className = "msg ok";
-        msg.textContent = `本地已存储 ${j.data.length} 只 ETF 的数据。`;
-        let html = "<table><thead><tr>" +
-          '<th><input type="checkbox" id="s-check-all" onclick="toggleAllChecks(this)"></th>' +
-          "<th>代码</th><th>名称</th><th>数据起始</th>" +
-          "<th>数据结束</th><th>记录数</th><th>操作</th></tr></thead><tbody>";
-        for (const r of j.data) {
-          html +=
-            `<tr><td><input type="checkbox" class="s-check" value="${r.代码}"></td>` +
-            `<td>${r.代码}</td><td>${r.名称 || "-"}</td><td>${r.开始日期}</td>` +
-            `<td>${r.结束日期}</td><td>${fmt(r.记录数)}</td>` +
-            `<td><button class="page-btn" onclick="analyzeEtf('${r.代码}')">查看分析</button></td></tr>`;
-        }
-        html += "</tbody></table>";
-        tableDiv.innerHTML = html;
+        msg.textContent = `本地已存储 ${j.data.length} 只 ETF 的数据。拖动每行最左侧的 ⠿ 可调整顺序。`;
+        summaryData = j.data;
+        renderSummaryTable();
       } catch (e) {
         msg.className = "msg error"; msg.textContent = "请求出错：" + e;
+      }
+    }
+
+    // 根据 summaryData 渲染汇总表（行可拖动排序）
+    function renderSummaryTable() {
+      const tableDiv = document.getElementById("s-table");
+      if (!summaryData.length) { tableDiv.innerHTML = ""; return; }
+      let html = "<table><thead><tr><th></th>" +
+        '<th><input type="checkbox" id="s-check-all" onclick="toggleAllChecks(this)"></th>' +
+        "<th>代码</th><th>名称</th><th>数据起始</th>" +
+        "<th>数据结束</th><th>记录数</th><th>操作</th></tr></thead><tbody>";
+      summaryData.forEach((r, i) => {
+        html +=
+          `<tr draggable="true" data-index="${i}" ondragstart="onRowDragStart(event,${i})" ` +
+          `ondragover="onRowDragOver(event)" ondragleave="onRowDragLeave(event)" ` +
+          `ondrop="onRowDrop(event,${i})" ondragend="onRowDragEnd(event)">` +
+          `<td class="drag-handle" title="拖动调整顺序">⠿</td>` +
+          `<td><input type="checkbox" class="s-check" value="${r.代码}"></td>` +
+          `<td>${r.代码}</td><td>${r.名称 || "-"}</td><td>${r.开始日期}</td>` +
+          `<td>${r.结束日期}</td><td>${fmt(r.记录数)}</td>` +
+          `<td><button class="page-btn" onclick="analyzeEtf('${r.代码}')">查看分析</button></td></tr>`;
+      });
+      html += "</tbody></table>";
+      tableDiv.innerHTML = html;
+    }
+
+    let dragIndex = null;
+    function onRowDragStart(e, i) {
+      dragIndex = i;
+      e.currentTarget.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+    }
+    function onRowDragOver(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      e.currentTarget.classList.add("drag-over");
+    }
+    function onRowDragLeave(e) { e.currentTarget.classList.remove("drag-over"); }
+    function onRowDragEnd() {
+      document.querySelectorAll("#s-table tr").forEach((tr) =>
+        tr.classList.remove("dragging", "drag-over"));
+    }
+    function onRowDrop(e, targetIndex) {
+      e.preventDefault();
+      document.querySelectorAll("#s-table tr").forEach((tr) => tr.classList.remove("drag-over"));
+      if (dragIndex === null || dragIndex === targetIndex) return;
+      const [moved] = summaryData.splice(dragIndex, 1);
+      summaryData.splice(targetIndex, 0, moved);
+      dragIndex = null;
+      renderSummaryTable();
+      saveOrder();
+    }
+
+    // 把当前顺序持久化到后端
+    async function saveOrder() {
+      const codes = summaryData.map((r) => r.代码);
+      const msg = document.getElementById("s-msg");
+      try {
+        await fetch("/api/order", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ codes }),
+        });
+        msg.className = "msg ok"; msg.textContent = "排序已保存。";
+      } catch (e) {
+        msg.className = "msg error"; msg.textContent = "排序保存失败：" + e;
       }
     }
 
