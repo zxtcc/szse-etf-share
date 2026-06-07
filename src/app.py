@@ -22,6 +22,8 @@ app = Flask(__name__)
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # ETF 代码校验（6 位数字）
 _CODE_RE = re.compile(r"^\d{6}$")
+# 默认历史起始日期（与「历史份额分析」板块的默认开始日期一致）
+DEFAULT_START_DATE = "2023-01-02"
 
 
 def _valid_date(s):
@@ -262,8 +264,8 @@ def _update_events(codes):
             results.append({"代码": code, "ok": False, "msg": "代码无效"})
             yield {"type": "etf_error", "code": code, "msg": "代码无效"}
             continue
-        existing = storage.existing_dates(code)
-        start = existing[0] if existing else end
+        # 按默认区间 [DEFAULT_START_DATE, 最近交易日] 回填，已有日期由回填逻辑自动跳过
+        start = DEFAULT_START_DATE
         added, filetotal, err = 0, 0, None
         try:
             for ev in _backfill_events(code, start, end):
@@ -337,10 +339,9 @@ def api_update():
         if not _CODE_RE.match(code):
             results.append({"代码": code, "ok": False, "msg": "代码无效"})
             continue
-        existing = storage.existing_dates(code)
-        start = existing[0] if existing else end  # 从已有最早日期起，增量补到最近交易日
+        # 按默认区间 [DEFAULT_START_DATE, 最近交易日] 回填，已有日期由回填逻辑自动跳过
         try:
-            final = _run_backfill(code, start, end)
+            final = _run_backfill(code, DEFAULT_START_DATE, end)
         except Exception as exc:  # noqa: BLE001
             results.append({"代码": code, "ok": False, "msg": "抓取失败：%s" % exc})
             continue
