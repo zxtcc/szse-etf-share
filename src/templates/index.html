@@ -335,7 +335,9 @@
 
       const start = size === 0 ? 0 : (curPage - 1) * size;
       const end = size === 0 ? total : Math.min(start + size, total);
-      renderTable(historyData.slice(start, end));
+      // 表格按时间倒序展示（最近的在最上方），图表仍保持升序
+      const desc = historyData.slice().reverse();
+      renderTable(desc.slice(start, end));
 
       document.getElementById("h-table-info").textContent =
         `共 ${total} 条　第 ${curPage}/${pageCount} 页　显示第 ${total ? start + 1 : 0}-${end} 条`;
@@ -392,10 +394,22 @@
       });
     }
 
+    // 格式化「当日变动」：带正负号与颜色（涨红跌绿，符合 A 股习惯）
+    function fmtChange(n) {
+      if (n === null || n === undefined) return "-";
+      const v = Number(n);
+      const text = (v > 0 ? "+" : "") + v.toLocaleString();
+      const color = v > 0 ? "#c0392b" : (v < 0 ? "#1e7e34" : "#888");
+      return `<span style="color:${color}">${text}</span>`;
+    }
+
     function renderTable(data) {
-      let html = "<table><thead><tr><th>日期</th><th>名称</th><th>份额（万份）</th></tr></thead><tbody>";
+      let html = "<table><thead><tr><th>日期</th><th>名称</th>" +
+        "<th>份额（万份）</th><th>当日变动份额（万份）</th></tr></thead><tbody>";
       for (const r of data) {
-        html += `<tr><td>${r.日期}</td><td>${r.名称 || "-"}</td><td>${fmt(r.份额)}</td></tr>`;
+        html +=
+          `<tr><td>${r.日期}</td><td>${r.名称 || "-"}</td>` +
+          `<td>${fmt(r.份额)}</td><td>${fmtChange(r.当日变动)}</td></tr>`;
       }
       html += "</tbody></table>";
       document.getElementById("h-table").innerHTML = html;

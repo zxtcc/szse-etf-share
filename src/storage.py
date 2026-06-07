@@ -21,15 +21,26 @@ from openpyxl.utils import get_column_letter
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(_PROJECT_ROOT, "data")
 
-# 程序内部规范列名（份额单位：万份）
-COLUMNS = ["日期", "代码", "名称", "份额", "抓取时间"]
+# 程序内部规范列名（份额单位：万份；当日变动 = 当日份额 - 前一交易日份额）
+COLUMNS = ["日期", "代码", "名称", "份额", "当日变动", "抓取时间"]
 
 # 规范列名 → Excel 磁盘表头（让单位等信息对人类可见）
-HEADER_LABELS = {"份额": "份额(万份)"}
+HEADER_LABELS = {"份额": "份额(万份)", "当日变动": "当日变动份额(万份)"}
 REVERSE_LABELS = {v: k for k, v in HEADER_LABELS.items()}
 
 # 各列在 Excel 中的列宽
-COL_WIDTHS = {"日期": 14, "代码": 10, "名称": 24, "份额": 18, "抓取时间": 22}
+COL_WIDTHS = {
+    "日期": 14, "代码": 10, "名称": 24, "份额": 18, "当日变动": 20, "抓取时间": 22,
+}
+
+
+def _compute_change(df_sorted):
+    """根据按日期升序排列的 DataFrame，计算「当日变动份额」=当日份额-前一行份额。
+
+    首行（无前序数据）置为 0。返回保留两位小数的 Series。
+    """
+    vals = pd.to_numeric(df_sorted["份额"], errors="coerce")
+    return vals.diff().fillna(0).round(2)
 
 
 def _ensure_data_dir():
@@ -94,6 +105,10 @@ def _write_styled(df, path):
             if col == "份额":
                 cell.number_format = "#,##0.00"  # 千分位 + 两位小数
                 cell.alignment = right
+            elif col == "当日变动":
+                # 涨红跌绿（A 股习惯）：正数红、负数绿、零正常
+                cell.number_format = "[Red]#,##0.00;[Green]-#,##0.00;0.00"
+                cell.alignment = right
             elif col in ("日期", "代码"):
                 cell.alignment = center
 
@@ -126,6 +141,8 @@ def save_records(code, records):
     # 同一日期保留最后一条（即本次新抓取的数据覆盖旧的）
     combined = combined.drop_duplicates(subset=["日期"], keep="last")
     combined = combined.sort_values("日期").reset_index(drop=True)
+    # 升序排好后重算「当日变动份额」
+    combined["当日变动"] = _compute_change(combined)
     combined = combined[COLUMNS]
 
     _write_styled(combined, get_file_path(code))
@@ -177,14 +194,17 @@ def load_history(code):
     if df.empty:
         return []
     df = df.sort_values("日期").reset_index(drop=True)
+    # 始终基于份额重算当日变动，保证旧文件也能正确返回
+    change = _compute_change(df)
     records = []
-    for _, r in df.iterrows():
+    for i, (_, r) in enumerate(df.iterrows()):
         records.append(
             {
                 "日期": None if pd.isna(r["日期"]) else str(r["日期"]),
                 "代码": None if pd.isna(r["代码"]) else str(r["代码"]),
                 "名称": None if pd.isna(r["名称"]) else str(r["名称"]),
                 "份额": None if pd.isna(r["份额"]) else float(r["份额"]),
+                "当日变动": float(change.iloc[i]),
             }
         )
     return records
