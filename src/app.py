@@ -413,5 +413,10 @@ if __name__ == "__main__":
 
     # 端口默认 5000，可用环境变量 PORT 覆盖（macOS 上 5000 常被 AirPlay 占用）
     port = int(os.environ.get("PORT", "5000"))
+    # 监听地址默认仅本机(127.0.0.1)；如需局域网/外网访问，设 HOST=0.0.0.0
+    host = os.environ.get("HOST", "127.0.0.1")
+    # 安全：仅本机访问时才开启 debug 调试器（其会暴露任意代码执行风险），
+    # 一旦监听到非本机地址则强制关闭 debug。
+    debug = host in ("127.0.0.1", "localhost")
     # threaded=True：SSE 流式回填会长时间占用连接，需并发处理其它请求
-    app.run(host="127.0.0.1", port=port, debug=True, threaded=True)
+    app.run(host=host, port=port, debug=debug, threaded=True)
