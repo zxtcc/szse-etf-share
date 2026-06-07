@@ -64,7 +64,7 @@
         </div>
         <div class="field">
           <label>日期</label>
-          <input id="q-date" type="date" value="2025-09-04" />
+          <input id="q-date" type="date" />
         </div>
         <button id="q-btn" onclick="doQuery()">查询</button>
       </div>
@@ -82,11 +82,11 @@
         </div>
         <div class="field">
           <label>开始日期</label>
-          <input id="h-start" type="date" value="2025-09-01" />
+          <input id="h-start" type="date" />
         </div>
         <div class="field">
           <label>结束日期</label>
-          <input id="h-end" type="date" value="2025-09-05" />
+          <input id="h-end" type="date" />
         </div>
         <button id="b-btn" onclick="doBackfill()">批量回填区间</button>
         <button id="h-btn" onclick="loadHistory()">加载历史</button>
@@ -100,6 +100,27 @@
 
   <script>
     let chart = null;
+
+    // 返回最近一个非周末日期（今天若为工作日则取今天，否则回退到上一个周五），格式 YYYY-MM-DD
+    function lastWeekday() {
+      const d = new Date();
+      while (d.getDay() === 0 || d.getDay() === 6) {
+        d.setDate(d.getDate() - 1);
+      }
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+
+    // 页面加载时初始化日期默认值
+    function initDefaults() {
+      const recent = lastWeekday();
+      document.getElementById("q-date").value = recent;      // 单日查询：最近非周末
+      document.getElementById("h-start").value = "2023-01-02"; // 历史开始：固定 2023-01-02
+      document.getElementById("h-end").value = recent;        // 历史结束：最近非周末
+    }
+    window.addEventListener("DOMContentLoaded", initDefaults);
 
     function fmt(n) {
       if (n === null || n === undefined) return "-";
