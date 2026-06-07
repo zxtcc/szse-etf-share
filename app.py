@@ -8,9 +8,10 @@
 """
 
 import re
-from datetime import datetime
+import json
+from datetime import datetime, timedelta
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 import szse_client
 import storage
@@ -65,40 +66,152 @@ def api_query():
     return jsonify({"ok": True, "data": rec})
 
 
+def _compute_missing(existing, start, end):
+    """根据已有日期（升序）计算 [start, end] 内仍需抓取的子区间。
+
+    采用「连续覆盖」假设：把已有数据视为覆盖了 [最早, 最晚] 这段连续区间，
+    只抓取落在该区间之外的部分（即向前/向后扩展的增量），从而跳过已抓取的日期。
+    若 [start, end] 完全落在已覆盖区间内，则返回空列表（无需请求）。
+    """
+    if not existing:
+        return [(start, end)]
+
+    sd = datetime.strptime(start, "%Y-%m-%d").date()
+    ed = datetime.strptime(end, "%Y-%m-%d").date()
+    lo = datetime.strptime(existing[0], "%Y-%m-%d").date()
+    hi = datetime.strptime(existing[-1], "%Y-%m-%d").date()
+
+    ranges = []
+    if sd < lo:  # 向更早方向的缺口
+        ranges.append((start, min(ed, lo - timedelta(days=1)).strftime("%Y-%m-%d")))
+    if ed > hi:  # 向更晚方向的缺口
+        ranges.append((max(sd, hi + timedelta(days=1)).strftime("%Y-%m-%d"), end))
+    return ranges
+
+
+def _backfill_events(code, start, end):
+    """执行回填并逐步产出进度事件（dict）。最后写入 xlsx 并产出汇总事件。"""
+    existing = storage.existing_dates(code)
+    missing = _compute_missing(existing, start, end)
+
+    # 把所有缺口区间切成窗口，得到总窗口数用于进度展示
+    windows = []
+    for ms, me in missing:
+        windows.extend(szse_client.split_windows(ms, me))
+
+    yield {
+        "type": "start",
+        "已存在天数": len(existing),
+        "待抓取窗口数": len(windows),
+        "缺口区间": [list(r) for r in missing],
+    }
+
+    if not windows:
+        total = len(existing)
+        yield {
+            "type": "done",
+            "msg": "该区间数据已全部存在，无需重复请求深交所。",
+            "新增交易日数": 0,
+            "文件总记录数": total,
+        }
+        return
+
+    collected = {}
+    for idx, (ws, we) in enumerate(windows, start=1):
+        rows = szse_client.fetch_window(code, ws, we)
+        for r in rows:
+            if r["日期"]:
+                collected[r["日期"]] = r
+        yield {
+            "type": "progress",
+            "当前窗口": idx,
+            "总窗口数": len(windows),
+            "窗口区间": [ws, we],
+            "本窗口交易日": len(rows),
+            "累计新抓取": len(collected),
+        }
+        if idx < len(windows):
+            szse_client._sleep(szse_client.WINDOW_SLEEP)
+
+    records = [collected[k] for k in sorted(collected)]
+    total = storage.save_records(code, records)
+    yield {
+        "type": "done",
+        "msg": "回填完成",
+        "新增交易日数": len(records),
+        "文件总记录数": total,
+    }
+
+
+def _validate_backfill(code, start, end):
+    """校验回填参数，返回错误信息字符串；通过则返回 None。"""
+    if not _CODE_RE.match(code):
+        return "请输入正确的 6 位 ETF 代码"
+    if not _valid_date(start) or not _valid_date(end):
+        return "请输入正确的起止日期"
+    if start > end:
+        return "开始日期不能晚于结束日期"
+    span_days = (
+        datetime.strptime(end, "%Y-%m-%d") - datetime.strptime(start, "%Y-%m-%d")
+    ).days
+    if span_days > 2200:
+        return "区间过大，请控制在约 6 年以内"
+    return None
+
+
+@app.route("/api/backfill_stream")
+def api_backfill_stream():
+    """SSE 流式回填：实时向前端推送抓取进度。"""
+    code = str(request.args.get("code", "")).strip()
+    start = str(request.args.get("start", "")).strip()
+    end = str(request.args.get("end", "")).strip()
+
+    err = _validate_backfill(code, start, end)
+
+    def gen():
+        if err:
+            yield "data: %s\n\n" % json.dumps({"type": "error", "msg": err}, ensure_ascii=False)
+            return
+        try:
+            for ev in _backfill_events(code, start, end):
+                yield "data: %s\n\n" % json.dumps(ev, ensure_ascii=False)
+        except Exception as exc:  # noqa: BLE001
+            yield "data: %s\n\n" % json.dumps(
+                {"type": "error", "msg": "抓取失败：%s" % exc}, ensure_ascii=False
+            )
+
+    headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    return Response(gen(), mimetype="text/event-stream", headers=headers)
+
+
 @app.route("/api/backfill", methods=["POST"])
 def api_backfill():
-    """批量回填：一次性抓取日期区间内的逐日份额（接口原生支持区间，自动跳过非交易日）。"""
+    """非流式回填（与流式同逻辑：跳过已有日期、切窗抓取），返回最终汇总。"""
     body = request.get_json(silent=True) or {}
     code = str(body.get("code", "")).strip()
     start = str(body.get("start", "")).strip()
     end = str(body.get("end", "")).strip()
 
-    if not _CODE_RE.match(code):
-        return jsonify({"ok": False, "msg": "请输入正确的 6 位 ETF 代码"}), 400
-    if not _valid_date(start) or not _valid_date(end):
-        return jsonify({"ok": False, "msg": "请输入正确的起止日期"}), 400
-    if start > end:
-        return jsonify({"ok": False, "msg": "开始日期不能晚于结束日期"}), 400
-
-    # 跨度上限保护（约 6 年），避免误填超长区间
-    span_days = (
-        datetime.strptime(end, "%Y-%m-%d") - datetime.strptime(start, "%Y-%m-%d")
-    ).days
-    if span_days > 2200:
-        return jsonify({"ok": False, "msg": "区间过大，请控制在约 6 年以内"}), 400
+    err = _validate_backfill(code, start, end)
+    if err:
+        return jsonify({"ok": False, "msg": err}), 400
 
     try:
-        records = szse_client.fetch_range(code, start, end)
+        final = {}
+        for ev in _backfill_events(code, start, end):
+            if ev.get("type") in ("done", "error"):
+                final = ev
     except Exception as exc:  # noqa: BLE001
         return jsonify({"ok": False, "msg": "抓取失败：%s" % exc}), 502
 
-    total = storage.save_records(code, records)
+    if final.get("type") == "error":
+        return jsonify({"ok": False, "msg": final.get("msg")}), 502
     return jsonify(
         {
             "ok": True,
-            "msg": "回填完成",
-            "抓取交易日数": len(records),
-            "文件总记录数": total,
+            "msg": final.get("msg", "回填完成"),
+            "新增交易日数": final.get("新增交易日数", 0),
+            "文件总记录数": final.get("文件总记录数", 0),
         }
     )
 
@@ -131,4 +244,5 @@ if __name__ == "__main__":
 
     # 端口默认 5000，可用环境变量 PORT 覆盖（macOS 上 5000 常被 AirPlay 占用）
     port = int(os.environ.get("PORT", "5000"))
-    app.run(host="127.0.0.1", port=port, debug=True)
+    # threaded=True：SSE 流式回填会长时间占用连接，需并发处理其它请求
+    app.run(host="127.0.0.1", port=port, debug=True, threaded=True)

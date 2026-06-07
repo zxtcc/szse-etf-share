@@ -77,6 +77,15 @@ def save_records(code, records):
     return len(combined)
 
 
+def existing_dates(code):
+    """返回某 ETF 已存储的日期字符串（升序列表），用于跳过已抓取的区间。"""
+    df = load_df(code)
+    if df.empty:
+        return []
+    days = [str(x) for x in df["日期"].dropna().tolist()]
+    return sorted(set(days))
+
+
 def load_history(code):
     """读取某 ETF 历史数据，返回按日期升序的 dict 列表，供前端图表/表格使用。"""
     df = load_df(code)

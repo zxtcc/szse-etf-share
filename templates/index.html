@@ -45,6 +45,15 @@
     .result-grid div b { display: block; font-size: 12px; color: #888; font-weight: normal; }
     .result-grid div span { font-size: 20px; color: #1f4e79; }
     .hint { font-size: 12px; color: #999; margin-top: 6px; }
+    .progress-wrap { margin-top: 12px; }
+    .progress-bar {
+      width: 100%; height: 14px; background: #eef1f5; border-radius: 7px; overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; width: 0; background: #1f4e79; border-radius: 7px;
+      transition: width .25s ease;
+    }
+    .progress-text { font-size: 12px; color: #555; margin-top: 6px; }
   </style>
 </head>
 <body>
@@ -91,8 +100,12 @@
         <button id="b-btn" onclick="doBackfill()">批量回填区间</button>
         <button id="h-btn" onclick="loadHistory()">加载历史</button>
       </div>
-      <div class="hint">批量回填会逐日抓取深交所数据并存入 data/代码.xlsx，非交易日自动跳过，耗时与天数相关。</div>
+      <div class="hint">批量回填按 180 天分段抓取深交所数据并存入 data/代码.xlsx；已抓取过的日期会自动跳过，非交易日自动忽略；每段请求间有随机间隔以避免被反爬，耗时与天数相关。</div>
       <div id="h-msg" class="msg"></div>
+      <div id="h-progress" class="progress-wrap" style="display:none;">
+        <div class="progress-bar"><div id="h-progress-fill" class="progress-fill"></div></div>
+        <div id="h-progress-text" class="progress-text"></div>
+      </div>
       <canvas id="chart" height="110" style="margin-top:16px;"></canvas>
       <div id="h-table"></div>
     </div>
@@ -161,34 +174,67 @@
       }
     }
 
-    async function doBackfill() {
+    function setProgress(done, total, label) {
+      const wrap = document.getElementById("h-progress");
+      const fill = document.getElementById("h-progress-fill");
+      const text = document.getElementById("h-progress-text");
+      wrap.style.display = "block";
+      const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+      fill.style.width = pct + "%";
+      text.textContent = label;
+    }
+
+    function doBackfill() {
       const code = document.getElementById("h-code").value.trim();
       const start = document.getElementById("h-start").value.trim();
       const end = document.getElementById("h-end").value.trim();
       const btn = document.getElementById("b-btn");
       const msg = document.getElementById("h-msg");
-      msg.className = "msg"; msg.textContent = "回填中，请耐心等待…";
+      msg.className = "msg"; msg.textContent = "正在准备回填…";
       btn.disabled = true;
-      try {
-        const resp = await fetch("/api/backfill", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code, start, end }),
-        });
-        const j = await resp.json();
-        if (!j.ok) {
-          msg.className = "msg error"; msg.textContent = j.msg;
-        } else {
+      setProgress(0, 1, "正在检查已有数据…");
+
+      const url =
+        "/api/backfill_stream?code=" + encodeURIComponent(code) +
+        "&start=" + encodeURIComponent(start) +
+        "&end=" + encodeURIComponent(end);
+      const es = new EventSource(url);
+
+      es.onmessage = (e) => {
+        const ev = JSON.parse(e.data);
+        if (ev.type === "error") {
+          msg.className = "msg error"; msg.textContent = ev.msg;
+          document.getElementById("h-progress").style.display = "none";
+          es.close(); btn.disabled = false;
+        } else if (ev.type === "start") {
+          if (ev.待抓取窗口数 === 0) {
+            setProgress(1, 1, "已有数据可覆盖该区间，无需请求深交所。");
+          } else {
+            setProgress(0, ev.待抓取窗口数,
+              `已存在 ${ev.已存在天数} 天，需抓取 ${ev.待抓取窗口数} 个时间段…`);
+          }
+        } else if (ev.type === "progress") {
+          setProgress(ev.当前窗口, ev.总窗口数,
+            `进度 ${ev.当前窗口}/${ev.总窗口数} 段　本段 ${ev.窗口区间[0]} ~ ${ev.窗口区间[1]}　` +
+            `本段交易日 ${ev.本窗口交易日}，累计新抓取 ${ev.累计新抓取} 天`);
+        } else if (ev.type === "done") {
+          setProgress(1, 1, "完成");
           msg.className = "msg ok";
           msg.textContent =
-            `回填完成：抓取到 ${j.抓取交易日数} 个交易日，文件共 ${j.文件总记录数} 条。`;
+            `${ev.msg}：新增 ${ev.新增交易日数} 个交易日，文件共 ${ev.文件总记录数} 条。`;
+          es.close(); btn.disabled = false;
           loadHistory();
         }
-      } catch (e) {
-        msg.className = "msg error"; msg.textContent = "请求出错：" + e;
-      } finally {
-        btn.disabled = false;
-      }
+      };
+
+      es.onerror = () => {
+        // 连接异常关闭（done 后浏览器也会触发，此处仅在未完成时提示）
+        if (btn.disabled) {
+          msg.className = "msg error";
+          msg.textContent = "连接中断，请重试。";
+          es.close(); btn.disabled = false;
+        }
+      };
     }
 
     async function loadHistory() {

@@ -34,6 +34,10 @@ CATALOG = "scsj_fund_jjgm"
 # 单次查询的最大日期跨度（天）。实测约 180 天可用，留足余量。
 MAX_SPAN_DAYS = 180
 
+# 反爬：请求之间的随机休眠区间（秒）
+PAGE_SLEEP = (0.4, 1.0)    # 同一窗口翻页之间
+WINDOW_SLEEP = (0.8, 1.8)  # 不同窗口之间
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -71,6 +75,11 @@ def _get_json(params, retries=3, timeout=20):
     raise RuntimeError("请求深交所接口失败：%s" % last_err)
 
 
+def _sleep(span):
+    """在给定区间内随机休眠，降低被反爬识别的概率。"""
+    time.sleep(random.uniform(span[0], span[1]))
+
+
 def _parse_size(text):
     """将带千分位逗号的规模字符串（万份）转为 float，无法解析返回 None。"""
     if text is None:
@@ -84,7 +93,7 @@ def _parse_size(text):
         return None
 
 
-def _fetch_window(code, start, end):
+def fetch_window(code, start, end):
     """抓取一个不超过 MAX_SPAN_DAYS 的日期窗口内的全部记录（自动翻页）。
 
     返回 dict 列表：{日期, 代码, 名称, 份额}（份额单位：万份）。
@@ -124,8 +133,21 @@ def _fetch_window(code, start, end):
         if pageno >= pagecount:
             break
         pageno += 1
-        time.sleep(0.2)
+        _sleep(PAGE_SLEEP)  # 翻页之间随机休眠
     return results
+
+
+def split_windows(start, end, max_span=MAX_SPAN_DAYS):
+    """将 [start, end] 按 max_span 天切分为若干 (窗口起, 窗口止) 区间。"""
+    d0 = datetime.strptime(start, "%Y-%m-%d").date()
+    d1 = datetime.strptime(end, "%Y-%m-%d").date()
+    windows = []
+    cur = d0
+    while cur <= d1:
+        win_end = min(cur + timedelta(days=max_span - 1), d1)
+        windows.append((cur.strftime("%Y-%m-%d"), win_end.strftime("%Y-%m-%d")))
+        cur = win_end + timedelta(days=1)
+    return windows
 
 
 def fetch_range(code, start, end):
@@ -135,22 +157,17 @@ def fetch_range(code, start, end):
     返回：按日期升序的 dict 列表 {日期, 代码, 名称, 份额}。非交易日不会出现在结果中。
     """
     code = str(code).strip()
-    d0 = datetime.strptime(start, "%Y-%m-%d").date()
-    d1 = datetime.strptime(end, "%Y-%m-%d").date()
-    if d0 > d1:
+    if datetime.strptime(start, "%Y-%m-%d") > datetime.strptime(end, "%Y-%m-%d"):
         return []
 
     by_date = {}
-    cur = d0
-    while cur <= d1:
-        win_end = min(cur + timedelta(days=MAX_SPAN_DAYS - 1), d1)
-        for row in _fetch_window(
-            code, cur.strftime("%Y-%m-%d"), win_end.strftime("%Y-%m-%d")
-        ):
+    windows = split_windows(start, end)
+    for i, (ws, we) in enumerate(windows):
+        for row in fetch_window(code, ws, we):
             if row["日期"]:
                 by_date[row["日期"]] = row
-        cur = win_end + timedelta(days=1)
-        time.sleep(0.2)
+        if i < len(windows) - 1:
+            _sleep(WINDOW_SLEEP)  # 窗口之间随机休眠
 
     return [by_date[k] for k in sorted(by_date)]
 
