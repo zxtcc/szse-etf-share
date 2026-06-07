@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """ETF 份额历史数据的本地存储模块。
 
-每个 ETF 的数据保存在 data/代码.xlsx，列结构：
-    日期, 代码, 名称, 份额, 抓取时间
-其中「份额」单位为万份（与深交所基金规模口径一致）。
+每个 ETF 的数据保存在 data/代码.xlsx，列结构（磁盘表头）：
+    日期, 代码, 名称, 份额(万份), 抓取时间
+程序内部统一使用规范列名「份额」（数值，单位万份）；写入 Excel 时表头显示为
+「份额(万份)」并套用排版样式（加粗表头、冻结首行、千分位、列宽、筛选器），方便人工查看。
 按「日期」去重（新数据覆盖旧数据），按日期升序保存。
 """
 
@@ -11,12 +12,22 @@ import os
 from datetime import datetime
 
 import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 # 数据目录（与本文件同级的 data 文件夹）
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
-# Excel 列顺序（份额单位：万份）
+# 程序内部规范列名（份额单位：万份）
 COLUMNS = ["日期", "代码", "名称", "份额", "抓取时间"]
+
+# 规范列名 → Excel 磁盘表头（让单位等信息对人类可见）
+HEADER_LABELS = {"份额": "份额(万份)"}
+REVERSE_LABELS = {v: k for k, v in HEADER_LABELS.items()}
+
+# 各列在 Excel 中的列宽
+COL_WIDTHS = {"日期": 14, "代码": 10, "名称": 24, "份额": 18, "抓取时间": 22}
 
 
 def _ensure_data_dir():
@@ -30,7 +41,7 @@ def get_file_path(code):
 
 
 def load_df(code):
-    """读取某 ETF 的历史数据为 DataFrame，文件不存在则返回空 DataFrame。"""
+    """读取某 ETF 的历史数据为 DataFrame（规范列名），文件不存在则返回空 DataFrame。"""
     path = get_file_path(code)
     if not os.path.isfile(path):
         return pd.DataFrame(columns=COLUMNS)
@@ -38,6 +49,8 @@ def load_df(code):
         df = pd.read_excel(path, dtype={"日期": str, "代码": str})
     except Exception:
         return pd.DataFrame(columns=COLUMNS)
+    # 兼容旧/新表头：把显示表头（如「份额(万份)」）还原为规范列名
+    df = df.rename(columns=REVERSE_LABELS)
     # 补齐缺失列，保证列顺序统一
     for col in COLUMNS:
         if col not in df.columns:
@@ -45,11 +58,51 @@ def load_df(code):
     return df[COLUMNS]
 
 
+def _write_styled(df, path):
+    """将 DataFrame（规范列名）写为排版美观、人类可读的 Excel 文件。"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "份额数据"
+
+    # 表头（使用显示标签）
+    headers = [HEADER_LABELS.get(c, c) for c in df.columns]
+    ws.append(headers)
+    # 数据行
+    for _, row in df.iterrows():
+        ws.append([None if pd.isna(row[c]) else row[c] for c in df.columns])
+
+    # 表头样式：深蓝底、白字、加粗、居中
+    header_fill = PatternFill("solid", fgColor="1F4E79")
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    ws.freeze_panes = "A2"  # 冻结首行
+    last_col = get_column_letter(len(df.columns))
+    ws.auto_filter.ref = "A1:%s%d" % (last_col, ws.max_row)  # 表头筛选器
+
+    center = Alignment(horizontal="center")
+    right = Alignment(horizontal="right")
+    for idx, col in enumerate(df.columns, start=1):
+        letter = get_column_letter(idx)
+        ws.column_dimensions[letter].width = COL_WIDTHS.get(col, 14)
+        for r in range(2, ws.max_row + 1):
+            cell = ws.cell(row=r, column=idx)
+            if col == "份额":
+                cell.number_format = "#,##0.00"  # 千分位 + 两位小数
+                cell.alignment = right
+            elif col in ("日期", "代码"):
+                cell.alignment = center
+
+    wb.save(path)
+
+
 def save_records(code, records):
-    """将若干条记录写入某 ETF 的 xlsx，按日期去重后升序保存。
+    """将若干条记录写入某 ETF 的 xlsx，按日期去重后升序保存（排版美观）。
 
     参数：
-        records: dict 列表，每条至少含 日期/代码/名称/份额/净值
+        records: dict 列表，每条至少含 日期/代码/名称/份额
     返回：保存后该文件的总记录数。
     """
     if not records:
@@ -73,7 +126,7 @@ def save_records(code, records):
     combined = combined.sort_values("日期").reset_index(drop=True)
     combined = combined[COLUMNS]
 
-    combined.to_excel(get_file_path(code), index=False)
+    _write_styled(combined, get_file_path(code))
     return len(combined)
 
 
