@@ -239,6 +239,12 @@ def api_history():
     )
 
 
+@app.route("/api/summary")
+def api_summary():
+    """返回本地已存储数据的所有 ETF 汇总（代码、名称、数据时间段、记录数）。"""
+    return jsonify({"ok": True, "data": storage.list_summary()})
+
+
 if __name__ == "__main__":
     import os
 

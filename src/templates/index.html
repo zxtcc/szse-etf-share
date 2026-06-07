@@ -142,6 +142,17 @@
       <div id="h-table"></div>
       <div id="h-pager" class="pager"></div>
     </div>
+
+    <!-- ETF 数据汇总 -->
+    <div class="card">
+      <h2>ETF 数据汇总</h2>
+      <div class="row">
+        <button id="s-btn" onclick="loadSummary()">刷新汇总</button>
+      </div>
+      <div class="hint">列出本地已存储数据的所有 ETF（代码、中文名称）及各自数据覆盖的时间段（数据来自 data/代码.xlsx）。点击某行可在上方「历史份额分析」中查看该 ETF。</div>
+      <div id="s-msg" class="msg"></div>
+      <div id="s-table"></div>
+    </div>
   </div>
 
   <script>
@@ -169,7 +180,10 @@
       document.getElementById("h-start").value = "2023-01-02"; // 历史开始：固定 2023-01-02
       document.getElementById("h-end").value = recent;        // 历史结束：最近非周末
     }
-    window.addEventListener("DOMContentLoaded", initDefaults);
+    window.addEventListener("DOMContentLoaded", () => {
+      initDefaults();
+      loadSummary();  // 进入页面即展示已存储 ETF 汇总
+    });
 
     function fmt(n) {
       if (n === null || n === undefined) return "-";
@@ -385,6 +399,46 @@
       }
       html += "</tbody></table>";
       document.getElementById("h-table").innerHTML = html;
+    }
+
+    // ETF 数据汇总：列出本地已存储的所有 ETF 及其数据时间段
+    async function loadSummary() {
+      const msg = document.getElementById("s-msg");
+      const tableDiv = document.getElementById("s-table");
+      msg.className = "msg"; msg.textContent = "加载中…";
+      try {
+        const resp = await fetch("/api/summary");
+        const j = await resp.json();
+        if (!j.ok) { msg.className = "msg error"; msg.textContent = j.msg || "加载失败"; return; }
+        if (!j.data.length) {
+          msg.className = "msg";
+          msg.textContent = "暂无已存储的 ETF 数据，请先用「单日查询」或「批量回填区间」采集。";
+          tableDiv.innerHTML = "";
+          return;
+        }
+        msg.className = "msg ok";
+        msg.textContent = `本地已存储 ${j.data.length} 只 ETF 的数据。`;
+        let html = "<table><thead><tr><th>代码</th><th>名称</th><th>数据起始</th>" +
+          "<th>数据结束</th><th>记录数</th><th>操作</th></tr></thead><tbody>";
+        for (const r of j.data) {
+          html +=
+            `<tr><td>${r.代码}</td><td>${r.名称 || "-"}</td><td>${r.开始日期}</td>` +
+            `<td>${r.结束日期}</td><td>${fmt(r.记录数)}</td>` +
+            `<td><button class="page-btn" onclick="analyzeEtf('${r.代码}')">查看分析</button></td></tr>`;
+        }
+        html += "</tbody></table>";
+        tableDiv.innerHTML = html;
+      } catch (e) {
+        msg.className = "msg error"; msg.textContent = "请求出错：" + e;
+      }
+    }
+
+    // 从汇总表跳转到「历史份额分析」并加载该 ETF
+    function analyzeEtf(code) {
+      const input = document.getElementById("h-code");
+      input.value = code;
+      loadHistory();
+      document.querySelector("#h-msg").scrollIntoView({ behavior: "smooth", block: "center" });
     }
   </script>
 </body>

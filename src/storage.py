@@ -9,6 +9,7 @@
 """
 
 import os
+import glob
 from datetime import datetime
 
 import pandas as pd
@@ -138,6 +139,36 @@ def existing_dates(code):
         return []
     days = [str(x) for x in df["日期"].dropna().tolist()]
     return sorted(set(days))
+
+
+def list_summary():
+    """汇总本地已存储数据的所有 ETF。
+
+    返回 dict 列表（按代码升序），每项含：
+        代码, 名称, 开始日期, 结束日期, 记录数
+    """
+    if not os.path.isdir(DATA_DIR):
+        return []
+    results = []
+    for path in sorted(glob.glob(os.path.join(DATA_DIR, "*.xlsx"))):
+        code = os.path.splitext(os.path.basename(path))[0]
+        df = load_df(code)
+        df = df.dropna(subset=["日期"])
+        if df.empty:
+            continue
+        df = df.sort_values("日期")
+        dates = [str(x) for x in df["日期"].tolist()]
+        names = [str(x) for x in df["名称"].dropna().tolist() if str(x).strip()]
+        results.append(
+            {
+                "代码": code,
+                "名称": names[-1] if names else "",  # 取最新一条非空名称
+                "开始日期": dates[0],
+                "结束日期": dates[-1],
+                "记录数": len(dates),
+            }
+        )
+    return results
 
 
 def load_history(code):
